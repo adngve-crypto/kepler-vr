@@ -1243,6 +1243,93 @@ function keyOff(i){
 }
 
 /* ============================================================
+   SELECTOR LÁSER
+   El gatillo dispara un haz: si toca un panel, lo activa a
+   distancia; si no toca nada, lanza un planeta como antes.
+   ============================================================ */
+const raycaster = new THREE.Raycaster();
+raycaster.far = 8;
+const lasers = [], laserHit = [], laserSel = new Map();
+let rayTargets = [], rayCount = -1;
+function refreshTargets(){
+  if (touchables.length === rayCount) return;
+  rayCount = touchables.length;
+  rayTargets = touchables.map(t => t.mesh);
+}
+function findTouch(obj){
+  let o = obj;
+  for (let i=0;i<4 && o;i++){
+    const t = meshToTouch.get(o);
+    if (t) return t;
+    o = o.parent;
+  }
+  return null;
+}
+function buildLaser(c){
+  /* haz: cilindro fino orientado hacia -Z, escalado hasta el impacto */
+  const geo = new THREE.CylinderGeometry(0.0022, 0.0022, 1, 6, 1, true);
+  geo.translate(0, -0.5, 0);
+  geo.rotateX(-Math.PI/2);
+  const beam = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+    color: GOLD, transparent: true, opacity: 0.35,
+    blending: THREE.AdditiveBlending, depthWrite: false }));
+  beam.scale.z = 1.2;
+  c.add(beam);
+  const dot = new THREE.Sprite(new THREE.SpriteMaterial({ map: GLOW, color: GOLD,
+    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.9 }));
+  dot.scale.setScalar(0.05); dot.visible = false;
+  scene.add(dot);
+  lasers.push({ c, beam, dot, target: null });
+  return lasers[lasers.length-1];
+}
+const _org = new THREE.Vector3(), _dir = new THREE.Vector3();
+function updateLasers(){
+  refreshTargets();
+  for (const L of lasers){
+    L.c.getWorldPosition(_org);
+    _dir.set(0,0,-1).applyQuaternion(L.c.getWorldQuaternion(new THREE.Quaternion()));
+    raycaster.set(_org, _dir);
+    const hits = raycaster.intersectObjects(rayTargets, true);
+    let t = null, dist = 1.2;
+    if (hits.length){
+      t = findTouch(hits[0].object);
+      if (t){ dist = hits[0].distance; }
+    }
+    /* el haz no debe activar el panel de la propia muñeca */
+    if (t && t.wrist && wristGroup.parent === L.c){ t = null; dist = 1.2; }
+    L.target = t;
+    L.beam.scale.z = dist;
+    const on = !!t;
+    L.beam.material.opacity = on ? 0.75 : 0.22;
+    L.beam.material.color.setHex(on ? GOLD : 0x8a7a4a);
+    L.dot.visible = on;
+    if (on) L.dot.position.copy(_org).addScaledVector(_dir, dist);
+  }
+}
+function laserPress(c){
+  const L = lasers.find(x => x.c === c);
+  if (!L || !L.target) return false;
+  const t = L.target;
+  if (t.kind === 'key'){ keyOn(t.data, c); laserSel.set(c, t); }
+  else { touchStart(t, c, 0); laserSel.set(c, null); }
+  haptic(c, 0.65, 40);
+  laserFlash(L);
+  return true;
+}
+function laserRelease(c){
+  const t = laserSel.get(c);
+  if (t && t.kind === 'key') keyOff(t.data);
+  laserSel.delete(c);
+}
+const flashes = [];
+function laserFlash(L){
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: GLOW, color: 0xfff0c0,
+    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+  s.position.copy(L.dot.position); s.scale.setScalar(0.06);
+  scene.add(s); flashes.push({ s, life: 1 });
+}
+
+/* ============================================================
    ENTRADA XR
    ============================================================ */
 const controllers=[], tips=[], hands=[];
@@ -1641,93 +1728,6 @@ function bounceRoom(b){
     hapticAll(0.4, 45);
     return;
   }
-}
-
-/* ============================================================
-   SELECTOR LÁSER
-   El gatillo dispara un haz: si toca un panel, lo activa a
-   distancia; si no toca nada, lanza un planeta como antes.
-   ============================================================ */
-const raycaster = new THREE.Raycaster();
-raycaster.far = 8;
-const lasers = [], laserHit = [], laserSel = new Map();
-let rayTargets = [], rayCount = -1;
-function refreshTargets(){
-  if (touchables.length === rayCount) return;
-  rayCount = touchables.length;
-  rayTargets = touchables.map(t => t.mesh);
-}
-function findTouch(obj){
-  let o = obj;
-  for (let i=0;i<4 && o;i++){
-    const t = meshToTouch.get(o);
-    if (t) return t;
-    o = o.parent;
-  }
-  return null;
-}
-function buildLaser(c){
-  /* haz: cilindro fino orientado hacia -Z, escalado hasta el impacto */
-  const geo = new THREE.CylinderGeometry(0.0022, 0.0022, 1, 6, 1, true);
-  geo.translate(0, -0.5, 0);
-  geo.rotateX(-Math.PI/2);
-  const beam = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
-    color: GOLD, transparent: true, opacity: 0.35,
-    blending: THREE.AdditiveBlending, depthWrite: false }));
-  beam.scale.z = 1.2;
-  c.add(beam);
-  const dot = new THREE.Sprite(new THREE.SpriteMaterial({ map: GLOW, color: GOLD,
-    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.9 }));
-  dot.scale.setScalar(0.05); dot.visible = false;
-  scene.add(dot);
-  lasers.push({ c, beam, dot, target: null });
-  return lasers[lasers.length-1];
-}
-const _org = new THREE.Vector3(), _dir = new THREE.Vector3();
-function updateLasers(){
-  refreshTargets();
-  for (const L of lasers){
-    L.c.getWorldPosition(_org);
-    _dir.set(0,0,-1).applyQuaternion(L.c.getWorldQuaternion(new THREE.Quaternion()));
-    raycaster.set(_org, _dir);
-    const hits = raycaster.intersectObjects(rayTargets, true);
-    let t = null, dist = 1.2;
-    if (hits.length){
-      t = findTouch(hits[0].object);
-      if (t){ dist = hits[0].distance; }
-    }
-    /* el haz no debe activar el panel de la propia muñeca */
-    if (t && t.wrist && wristGroup.parent === L.c){ t = null; dist = 1.2; }
-    L.target = t;
-    L.beam.scale.z = dist;
-    const on = !!t;
-    L.beam.material.opacity = on ? 0.75 : 0.22;
-    L.beam.material.color.setHex(on ? GOLD : 0x8a7a4a);
-    L.dot.visible = on;
-    if (on) L.dot.position.copy(_org).addScaledVector(_dir, dist);
-  }
-}
-function laserPress(c){
-  const L = lasers.find(x => x.c === c);
-  if (!L || !L.target) return false;
-  const t = L.target;
-  if (t.kind === 'key'){ keyOn(t.data, c); laserSel.set(c, t); }
-  else { touchStart(t, c, 0); laserSel.set(c, null); }
-  haptic(c, 0.65, 40);
-  laserFlash(L);
-  return true;
-}
-function laserRelease(c){
-  const t = laserSel.get(c);
-  if (t && t.kind === 'key') keyOff(t.data);
-  laserSel.delete(c);
-}
-const flashes = [];
-function laserFlash(L){
-  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: GLOW, color: 0xfff0c0,
-    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
-  s.position.copy(L.dot.position); s.scale.setScalar(0.06);
-  scene.add(s); flashes.push({ s, life: 1 });
 }
 
 /* ============================================================
